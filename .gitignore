@@ -1,0 +1,15 @@
+target/
+build/
+out/
+*.lcbin*
+*.7z
+*.zip
+*.csv
+.idea/
+*.iml
+.vscode/
+*.class
+*.log
+
+# test fixtures are allowed
+!src/test/resources/**

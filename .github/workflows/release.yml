@@ -1,0 +1,74 @@
+name: Release
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v1.1.0); must already exist'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build jar, smoke, publish release
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref }}
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build & unit tests
+        run: mvn -B --no-transfer-progress package
+
+      - name: Name jar after the tag
+        id: jar
+        run: |
+          set -euo pipefail
+          src=$(ls target/lcbin-parser-*.jar | head -1)
+          dst="target/lcbin-parser-${TAG#v}.jar"
+          [ "$src" = "$dst" ] || mv "$src" "$dst"
+          echo "path=$dst" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke tests on the release jar
+        run: bash scripts/smoke.sh "${{ steps.jar.outputs.path }}"
+
+      - name: Upload build artifact (kept 1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcbin-parser-${{ env.TAG }}
+          path: ${{ steps.jar.outputs.path }}
+          retention-days: 1
+
+      - name: Create GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.TAG }}
+          name: lcbin-parser ${{ env.TAG }}
+          generate_release_notes: true
+          files: ${{ steps.jar.outputs.path }}
+
+      - name: Keep only the 3 latest releases
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh release list --limit 100 --json tagName,createdAt \
+            --jq 'sort_by(.createdAt) | reverse | .[3:] | .[].tagName' \
+          | while read -r old; do
+              [ -z "$old" ] && continue
+              echo "deleting release and tag $old"
+              gh release delete "$old" --yes --cleanup-tag
+            done

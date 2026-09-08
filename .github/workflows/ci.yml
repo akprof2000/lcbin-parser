@@ -1,0 +1,50 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, unit tests, smoke (JDK 21)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build, unit tests, package
+        run: mvn -B --no-transfer-progress package
+
+      - name: Resolve jar path
+        id: jar
+        run: echo "path=$(ls target/lcbin-parser-*.jar | head -1)" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke tests (real jar, archives, deadlock regression)
+        run: bash scripts/smoke.sh "${{ steps.jar.outputs.path }}"
+
+      - name: Upload jar (kept 1 day)
+        uses: actions/upload-artifact@v4
+        with:
+          name: lcbin-parser-${{ github.sha }}
+          path: ${{ steps.jar.outputs.path }}
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Upload test reports (kept 1 day)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports-${{ github.sha }}
+          path: target/surefire-reports/
+          retention-days: 1
+          if-no-files-found: ignore
